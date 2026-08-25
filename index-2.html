@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jarvis</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0a0a0f;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 24px;
+    text-align: center;
+  }
+  h1 {
+    color: #00e5ff;
+    font-size: 2.2em;
+    letter-spacing: 4px;
+    margin-bottom: 8px;
+    text-shadow: 0 0 20px rgba(0,229,255,0.5);
+  }
+  .subtitle { color: #666; font-size: 0.85em; margin-bottom: 40px; }
+  #status {
+    min-height: 60px;
+    font-size: 1.1em;
+    color: #ccc;
+    margin-bottom: 30px;
+    max-width: 320px;
+  }
+  #micBtn {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    border: none;
+    background: radial-gradient(circle, #00e5ff, #0088aa);
+    font-size: 2.5em;
+    cursor: pointer;
+    box-shadow: 0 0 30px rgba(0,229,255,0.4);
+    transition: transform 0.15s;
+  }
+  #micBtn:active { transform: scale(0.92); }
+  #micBtn.listening {
+    animation: pulse 1s infinite;
+    background: radial-gradient(circle, #ff3d3d, #aa0000);
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 20px rgba(255,61,61,0.6); }
+    50% { box-shadow: 0 0 45px rgba(255,61,61,0.9); }
+    100% { box-shadow: 0 0 20px rgba(255,61,61,0.6); }
+  }
+  .commands {
+    margin-top: 40px;
+    font-size: 0.8em;
+    color: #555;
+    max-width: 320px;
+    line-height: 1.6;
+  }
+  .commands b { color: #888; }
+
+  #cameraOverlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: #000;
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+  }
+  #cameraOverlay.active { display: flex; }
+  #cameraPreview {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1); /* mirror front camera like a selfie */
+  }
+  #countdown {
+    position: absolute;
+    color: #00e5ff;
+    font-size: 5em;
+    font-weight: bold;
+    text-shadow: 0 0 20px rgba(0,229,255,0.8);
+    pointer-events: none;
+  }
+  .flash {
+    animation: flash 0.25s ease-out;
+  }
+  @keyframes flash {
+    0% { background: #fff; }
+    100% { background: transparent; }
+  }
+
+  #textInputRow {
+    margin-top: 24px;
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    max-width: 320px;
+  }
+  #textInput {
+    flex: 1;
+    background: #14141c;
+    border: 1px solid #2a2a35;
+    border-radius: 24px;
+    padding: 12px 18px;
+    color: #e0e0e0;
+    font-size: 0.95em;
+    outline: none;
+  }
+  #textInput:focus { border-color: #00e5ff; }
+  #sendBtn {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    border: none;
+    background: #00e5ff;
+    color: #0a0a0f;
+    font-size: 1.2em;
+    cursor: pointer;
+  }
+  #sendBtn:active { transform: scale(0.92); }
+</style>
+</head>
+<body>
+
+<h1>JARVIS</h1>
+<div class="subtitle">voice control</div>
+
+<div id="status">Tap the mic and speak a command</div>
+
+<button id="micBtn">🎤</button>
+
+<div id="textInputRow">
+  <input type="text" id="textInput" placeholder="Ya yaha type karo...">
+  <button id="sendBtn">➤</button>
+</div>
+
+<div class="commands">
+  <b>Try saying:</b><br>
+  "call [name/number]" · "whatsapp [number]" · "open maps" ·
+  "search [something]" · "open camera" · "click a selfie" ·
+  "send message" · "open youtube" · "what's the time" ·
+  "what's the weather" · "tell me a joke" · "tell me a quote"
+</div>
+
+<div id="cameraOverlay">
+  <video id="cameraPreview" autoplay playsinline muted></video>
+  <div id="countdown"></div>
+</div>
+<canvas id="cameraCanvas" style="display:none;"></canvas>
+<a id="downloadLink" style="display:none;"></a>
+
+<script>
+const statusEl = document.getElementById('status');
+const micBtn = document.getElementById('micBtn');
+
+function setStatus(text) {
+  statusEl.textContent = text;
+}
+
+function speak(text) {
+  setStatus(text);
+  if ('speechSynthesis' in window) {
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.rate = 1.0;
+    speechSynthesis.speak(utter);
+  }
+}
+
+// Text input support - same brain as voice, just typed instead of spoken
+const textInput = document.getElementById('textInput');
+const sendBtn = document.getElementById('sendBtn');
+
+function submitTypedCommand() {
+  const command = textInput.value.trim();
+  if (!command) return;
+  setStatus('You typed: "' + command + '"');
+  handleCommand(command);
+  textInput.value = '';
+}
+
+sendBtn.addEventListener('click', submitTypedCommand);
+textInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') submitTypedCommand();
+});
+
+function handleCommand(command) {
+  command = command.toLowerCase().trim();
+
+  // Call someone (by number)
+  if (command.includes('call')) {
+    const numberMatch = command.match(/\d{6,}/);
+    if (numberMatch) {
+      speak('Calling ' + numberMatch[0]);
+      window.location.href = 'tel:' + numberMatch[0];
+    } else {
+      speak('Opening dialer');
+      window.location.href = 'tel:';
+    }
+    return;
+  }
+
+  // WhatsApp
+  if (command.includes('whatsapp')) {
+    const numberMatch = command.match(/\d{6,}/);
+    speak('Opening WhatsApp');
+    if (numberMatch) {
+      window.location.href = 'https://wa.me/' + numberMatch[0];
+    } else {
+      window.location.href = 'https://wa.me/';
+    }
+    return;
+  }
+
+  // Maps
+  if (command.includes('map')) {
+    speak('Opening Maps');
+    window.location.href = 'https://www.google.com/maps';
+    return;
+  }
+
+  // Search
+  if (command.includes('search')) {
+    const query = command.replace('search', '').trim();
+    speak('Searching for ' + query);
+    window.location.href = 'https://www.google.com/search?q=' + encodeURIComponent(query);
+    return;
+  }
+
+  // Selfie - auto capture using live camera
+  if (command.includes('selfie')) {
+    speak('Opening camera for a selfie');
+    takeSelfie();
+    return;
+  }
+
+  // Camera (generic open, uses native file picker + camera)
+  if (command.includes('camera')) {
+    speak('Opening camera');
+    openCamera();
+    return;
+  }
+
+  // SMS / message
+  if (command.includes('message') || command.includes('text')) {
+    speak('Opening messages');
+    window.location.href = 'sms:';
+    return;
+  }
+
+  // YouTube
+  if (command.includes('youtube')) {
+    speak('Opening YouTube');
+    window.location.href = 'https://www.youtube.com';
+    return;
+  }
+
+  // Email
+  if (command.includes('email') || command.includes('mail')) {
+    speak('Opening email');
+    window.location.href = 'mailto:';
+    return;
+  }
+
+  // Time
+  if (command.includes('time')) {
+    const now = new Date();
+    speak('It is ' + now.toLocaleTimeString());
+    return;
+  }
+
+  // Weather - asks backend, backend calls Open-Meteo
+  if (command.includes('weather')) {
+    speak('Checking the weather');
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          fetch(`/api/weather?lat=${lat}&lon=${lon}`)
+            .then((res) => res.json())
+            .then((data) => {
+              if (data.error) {
+                speak("Sorry, I couldn't fetch the weather.");
+                return;
+              }
+              speak(`It's currently ${data.temperature} degrees with ${data.condition}.`);
+            })
+            .catch(() => speak("Sorry, I couldn't fetch the weather."));
+        },
+        () => speak('I need location access to check the weather.')
+      );
+    } else {
+      speak('Location is not supported on this device.');
+    }
+    return;
+  }
+
+  // Joke - backend fetches from a public joke API
+  if (command.includes('joke')) {
+    speak('Let me think of one');
+    fetch('/api/joke')
+      .then((res) => res.json())
+      .then((data) => speak(data.text || "I couldn't find a joke right now."))
+      .catch(() => speak("Sorry, I couldn't fetch a joke."));
+    return;
+  }
+
+  // Quote - backend fetches from a public quotes API
+  if (command.includes('quote')) {
+    speak('Here is a thought for you');
+    fetch('/api/quote')
+      .then((res) => res.json())
+      .then((data) => speak(data.text || "I couldn't find a quote right now."))
+      .catch(() => speak("Sorry, I couldn't fetch a quote."));
+    return;
+  }
+
+  // Fallback: just search Google for it
+  speak("I'm not sure about that, searching Google instead");
+  window.location.href = 'https://www.google.com/search?q=' + encodeURIComponent(command);
+}
+
+async function takeSelfie() {
+  const overlay = document.getElementById('cameraOverlay');
+  const video = document.getElementById('cameraPreview');
+  const countdownEl = document.getElementById('countdown');
+  const canvas = document.getElementById('cameraCanvas');
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user' },
+      audio: false
+    });
+    video.srcObject = stream;
+    overlay.classList.add('active');
+
+    // small countdown so the person can pose
+    let count = 3;
+    countdownEl.textContent = count;
+    const countdownInterval = setInterval(() => {
+      count--;
+      if (count > 0) {
+        countdownEl.textContent = count;
+      } else {
+        clearInterval(countdownInterval);
+        countdownEl.textContent = '';
+      }
+    }, 1000);
+
+    setTimeout(() => {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      // mirror it so the saved photo matches what was previewed
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      overlay.classList.add('flash');
+      setTimeout(() => overlay.classList.remove('flash'), 250);
+
+      canvas.toBlob((blob) => {
+        const url = URL.createObjectURL(blob);
+        const link = document.getElementById('downloadLink');
+        link.href = url;
+        link.download = 'selfie-' + Date.now() + '.png';
+        link.click();
+        speak('Selfie captured and saved');
+
+        stream.getTracks().forEach(track => track.stop());
+        overlay.classList.remove('active');
+      }, 'image/png');
+    }, 3000);
+
+  } catch (err) {
+    setStatus('⚠️ Camera permission denied or unavailable.');
+    speak('I could not access the camera');
+  }
+}
+
+function openCamera() {
+  // Opens browser-based camera capture (not the native camera app,
+  // browsers can't launch native apps directly for security reasons)
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.capture = 'environment';
+  input.click();
+}
+
+// Speech recognition setup
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let alwaysOn = false;
+
+if (!SpeechRecognition) {
+  setStatus('⚠️ Voice recognition not supported. Please open this page in Chrome.');
+  micBtn.disabled = true;
+} else {
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'en-IN';
+  recognition.continuous = false;
+  recognition.interimResults = false;
+
+  // Ask for mic permission automatically as soon as the page loads
+  window.addEventListener('load', () => {
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then((stream) => {
+          setStatus('Mic ready. Tap the button to start always-listening mode.');
+          stream.getTracks().forEach(track => track.stop()); // release mic until actually needed
+        })
+        .catch((err) => {
+          setStatus('⚠️ Mic permission denied. Tap 🎤 and allow it to use Jarvis.');
+        });
+    }
+  });
+
+  function startListening() {
+    micBtn.classList.add('listening');
+    setStatus('Listening...');
+    try {
+      recognition.start();
+    } catch (e) {
+      // recognition may already be running
+    }
+  }
+
+  micBtn.addEventListener('click', () => {
+    alwaysOn = !alwaysOn;
+    if (alwaysOn) {
+      micBtn.textContent = '⏹️';
+      startListening();
+    } else {
+      micBtn.textContent = '🎤';
+      micBtn.classList.remove('listening');
+      recognition.stop();
+      setStatus('Stopped. Tap the mic to start listening again.');
+    }
+  });
+
+  recognition.onresult = (event) => {
+    const command = event.results[0][0].transcript;
+    setStatus('You said: "' + command + '"');
+    handleCommand(command);
+  };
+
+  recognition.onerror = (event) => {
+    micBtn.classList.remove('listening');
+    if (event.error === 'not-allowed') {
+      setStatus('⚠️ Microphone permission denied. Please allow mic access.');
+      alwaysOn = false;
+      micBtn.textContent = '🎤';
+    } else if (event.error === 'no-speech') {
+      // just didn't catch anything, keep the loop going quietly
+    } else {
+      setStatus('⚠️ Error: ' + event.error + '. Try again.');
+    }
+  };
+
+  recognition.onend = () => {
+    micBtn.classList.remove('listening');
+    // if always-on mode is active, wait for Jarvis to finish speaking,
+    // then automatically start listening again — no tap needed
+    if (alwaysOn) {
+      const waitAndRestart = () => {
+        if (speechSynthesis.speaking) {
+          setTimeout(waitAndRestart, 200);
+        } else {
+          setTimeout(startListening, 300);
+        }
+      };
+      waitAndRestart();
+    }
+  };
+}
+</script>
+
+</body>
+</html>
