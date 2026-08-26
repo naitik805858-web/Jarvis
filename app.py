@@ -72,6 +72,52 @@ def quote():
         return jsonify({"error": str(e)}), 500
 
 
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+
+
+# ---------- Chatbot (real AI answers via Groq - free tier) ----------
+@app.route("/api/chat", methods=["POST"])
+def chat():
+    if not GROQ_API_KEY:
+        return jsonify({"error": "GROQ_API_KEY not set on the server"}), 500
+
+    user_message = (request.json or {}).get("message", "").strip()
+    if not user_message:
+        return jsonify({"error": "no message provided"}), 400
+
+    try:
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": "llama-3.1-8b-instant",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are Jarvis, a helpful voice assistant. "
+                        "Keep replies short and conversational since they will be spoken aloud - "
+                        "usually 1-3 sentences."
+                    ),
+                },
+                {"role": "user", "content": user_message},
+            ],
+        }
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=15,
+        )
+        data = r.json()
+        reply = data["choices"][0]["message"]["content"]
+        return jsonify({"reply": reply})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+    
