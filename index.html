@@ -321,9 +321,57 @@ function handleCommand(command) {
     return;
   }
 
-  // Fallback: just search Google for it
-  speak("I'm not sure about that, searching Google instead");
-  window.location.href = 'https://www.google.com/search?q=' + encodeURIComponent(command);
+  // Open an installed app directly (Android + Chrome only)
+  // Works via Android's intent:// links - launches the real app if installed,
+  // falls back to its Play Store page if it isn't.
+  const APP_PACKAGES = {
+    'free fire': 'com.dts.freefireth',
+    'freefire': 'com.dts.freefireth',
+    'whatsapp': 'com.whatsapp',
+    'instagram': 'com.instagram.android',
+    'facebook': 'com.facebook.katana',
+    'snapchat': 'com.snapchat.android',
+    'telegram': 'org.telegram.messenger',
+    'spotify': 'com.spotify.music',
+    'netflix': 'com.netflix.mediaclient',
+    'youtube': 'com.google.android.youtube',
+    'pubg': 'com.tencent.ig',
+    'bgmi': 'com.pubg.imobile',
+    'chrome': 'com.android.chrome',
+    'gmail': 'com.google.android.gm',
+    'play store': 'com.android.vending',
+  };
+
+  if (command.startsWith('open ')) {
+    const appName = command.replace('open ', '').trim();
+    const matchedApp = Object.keys(APP_PACKAGES).find(name => appName.includes(name));
+
+    if (matchedApp) {
+      const pkg = APP_PACKAGES[matchedApp];
+      speak('Opening ' + matchedApp);
+      const fallbackUrl = encodeURIComponent(`https://play.google.com/store/apps/details?id=${pkg}`);
+      window.location.href =
+        `intent:#Intent;package=${pkg};action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;S.browser_fallback_url=${fallbackUrl};end`;
+      return;
+    }
+  }
+
+  // AI chatbot fallback - for anything that isn't a known command,
+  // ask the real AI (backend) instead of just Googling it
+  fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: command })
+  })
+    .then((res) => res.json())
+    .then((data) => {
+      if (data.error) {
+        speak("I couldn't reach my brain right now. Try again in a bit.");
+        return;
+      }
+      speak(data.reply);
+    })
+    .catch(() => speak("I couldn't reach my brain right now. Try again in a bit."));
 }
 
 async function takeSelfie() {
